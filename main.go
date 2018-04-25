@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/jessevdk/go-flags"
 	"os"
 	"path"
 	"path/filepath"
@@ -15,8 +18,17 @@ import (
 
 type keyvalue map[string]interface{}
 
+var opts struct {
+	Verbose  bool   `short:"v" long:"verbose" description:"Show verbose debug information" env:"TAG_MONGER_VERBOSE"`
+	PageSize int64  `short:"p" long:"pagesize" description:"page size of s3 object listing" default:"100" env:"TAG_MONGER_PAGESIZE"`
+	Bucket   string `short:"b" long:"bucket" description:"name of s3 bucket" required:"true" env:"TAG_MONGER_BUCKET" group:"foo"`
+	Group    struct {
+		Help bool `short:"h" long:"help" description:"Show this help message"`
+	} `group:"Help Options"`
+}
+
 // https://stackoverflow.com/questions/25254443/return-local-beginning-of-day-time-object-in-go/25254593#25254593
-func Bod(t time.Time) time.Time {
+func bod(t time.Time) time.Time {
 	year, month, day := t.Date()
 	return time.Date(year, month, day, 0, 0, 0, 0, t.Location())
 }
@@ -42,7 +54,9 @@ func fetch_objects(s3svc *s3.S3, bucket_name string, page_size int64) ([]string,
 	err := s3svc.ListObjectsPages(
 		inputparams,
 		func(page *s3.ListObjectsOutput, lastPage bool) bool {
-			fmt.Println("Page", pageNum)
+			if opts.Verbose {
+				fmt.Println("Page", pageNum)
+			}
 			pageNum++
 			for _, value := range page.Contents {
 				objs = append(objs, *value.Key)
@@ -71,7 +85,9 @@ func filter_objects(objs []string, pattern string) ([]string, error) {
 	var match_objs []string
 	for _, k := range objs {
 		if re.MatchString(k) {
-			fmt.Println(k)
+			if opts.Verbose {
+				fmt.Println(k)
+			}
 			match_objs = append(match_objs, k)
 		}
 	}
@@ -86,7 +102,7 @@ func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyval
 		return nil, nil, err
 	}
 
-	today := Bod(time.Now().In(pacific))
+	today := bod(time.Now().In(pacific))
 	fmt.Println("today:", today)
 	cutoff_date := today.AddDate(0, 0, (max_days - 1))
 	fmt.Println("expire tags prior to", cutoff_date)
@@ -136,8 +152,23 @@ func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyval
 }
 
 func run() error {
+	// the default behavior of flags.Parse() includes flags.HelpFlag, which
+	// results in the usage message being printed twice if we are manually
+	// printing the usage message on any flag error. Thus, -h|--help is being
+	// own way.
+	p := flags.NewParser(&opts, flags.PassDoubleDash)
+	_, err := p.Parse()
+	if err != nil {
+		fmt.Println(err, "\n")
+
+		var b bytes.Buffer
+		p.WriteHelp(&b)
+		return errors.New(b.String())
+	}
+
 	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String("us-east-1"),
+		// $AWS_REGION must be set if this is ommited.
+		//Region: aws.String("us-east-1"),
 		CredentialsChainVerboseErrors: aws.Bool(true),
 	})
 	if err != nil {
@@ -145,7 +176,7 @@ func run() error {
 	}
 	s3svc := s3.New(sess)
 
-	objs, err := fetch_objects(s3svc, "eups.lsst.codes", 500)
+	objs, err := fetch_objects(s3svc, opts.Bucket, opts.PageSize)
 	if err != nil {
 		return err
 	}
@@ -161,15 +192,17 @@ func run() error {
 		return err
 	}
 
-	fmt.Println("\"fresh enough\" objects")
-	for _, k := range fresh_objs {
-		fmt.Println(k["key"])
-	}
+	if opts.Verbose {
+		fmt.Println("\"fresh enough\" objects")
+		for _, k := range fresh_objs {
+			fmt.Println(k["key"])
+		}
 
-	fmt.Println("expired objects")
-	for _, k := range expired_objs {
-		fmt.Println(k["key"])
-		fmt.Println("    -> ", k["target_key"])
+		fmt.Println("expired objects")
+		for _, k := range expired_objs {
+			fmt.Println(k["key"])
+			fmt.Println("    -> ", k["target_key"])
+		}
 	}
 
 	return nil
