@@ -1,0 +1,49 @@
+os: linux
+language: c
+matrix:
+  include:
+    - env: TEST=docker-build
+      services:
+        - docker
+      script: |
+        make
+    - env: TEST=markdownlint
+      services:
+        - docker
+      script: |
+        set -e
+        shopt -s globstar nullglob
+        CHECK=( **/*.md )
+        [[ ${#CHECK[@]} -eq 0 ]] && exit
+        docker run -ti -v $(pwd):$(pwd) -w $(pwd) \
+          mivok/markdownlint:0.4.0 "${CHECK[@]}"
+    - env: TEST=make
+      script: |
+        set -e
+        shopt -s globstar nullglob
+        CHECK=( **/Makefile )
+        [[ ${#CHECK[@]} -eq 0 ]] && exit
+        for f in "${CHECK[@]}"; do
+          ( set -e
+            cd $(dirname "$f")
+            echo "checking $f"
+            make --dry-run --warn-undefined-variables
+          )
+        done
+    - env: TEST=hadolint
+      services:
+        - docker
+      script: |
+        set -e
+        shopt -s globstar nullglob
+        CHECK=( **/Dockerfile )
+        [[ ${#CHECK[@]} -eq 0 ]] && exit
+        for f in "${CHECK[@]}"; do
+          docker run -ti -v$(pwd):$(pwd) -w $(pwd) \
+            hadolint/hadolint hadolint "$f"
+        done
+branches:
+  only:
+  - master
+notifications:
+  email: false
