@@ -151,6 +151,41 @@ func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyval
 	return fresh_objs, expired_objs, nil
 }
 
+func mv_object(s3svc *s3.S3, src_bkt string, src_key string, dst_bkt string, dst_key string) error {
+	// copy object
+	copyinput := &s3.CopyObjectInput{
+		CopySource: aws.String(src_bkt + "/" + src_key),
+		Bucket:     aws.String(dst_bkt),
+		Key:        aws.String(dst_key),
+	}
+	_, err := s3svc.CopyObject(copyinput)
+	if err != nil {
+		return err
+	}
+
+	// Wait to see if it happened
+	headinput := &s3.HeadObjectInput{
+		Bucket: aws.String(dst_bkt),
+		Key:    aws.String(dst_key),
+	}
+	err = s3svc.WaitUntilObjectExists(headinput)
+	if err != nil {
+		return err
+	}
+
+	// delete source object
+	deleteinput := &s3.DeleteObjectInput{
+		Bucket: aws.String(src_bkt),
+		Key:    aws.String(src_key),
+	}
+	_, err = s3svc.DeleteObject(deleteinput)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func run() error {
 	// the default behavior of flags.Parse() includes flags.HelpFlag, which
 	// results in the usage message being printed twice if we are manually
@@ -198,8 +233,17 @@ func run() error {
 			fmt.Println(k["key"])
 		}
 
-		fmt.Println("expired objects")
-		for _, k := range expired_objs {
+	}
+
+	fmt.Println("expired objects")
+	for _, k := range expired_objs {
+		err := mv_object(
+			s3svc, opts.Bucket, k["key"].(string), opts.Bucket, k["target_key"].(string))
+		if err != nil {
+			return err
+		}
+
+		if opts.Verbose {
 			fmt.Println(k["key"])
 			fmt.Println("    -> ", k["target_key"])
 		}
