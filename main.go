@@ -21,6 +21,7 @@ type keyvalue map[string]interface{}
 var opts struct {
 	Verbose  bool   `short:"v" long:"verbose" description:"Show verbose debug information" env:"TAG_MONGER_VERBOSE"`
 	PageSize int64  `short:"p" long:"pagesize" description:"page size of s3 object listing" default:"100" env:"TAG_MONGER_PAGESIZE"`
+	Limit    int64  `short:"l" long:"limit" description:"maximum number of s3 object to list" default:"1000" env:"TAG_MONGER_LIMIT"`
 	Bucket   string `short:"b" long:"bucket" description:"name of s3 bucket" required:"true" env:"TAG_MONGER_BUCKET" group:"foo"`
 	Group    struct {
 		Help bool `short:"h" long:"help" description:"Show this help message"`
@@ -61,10 +62,12 @@ func fetch_objects(s3svc *s3.S3, bucket_name string, page_size int64) ([]string,
 			for _, value := range page.Contents {
 				objs = append(objs, *value.Key)
 			}
+			if opts.Limit > 0 && int64(len(objs)) >= opts.Limit {
+				return false
+			}
 
 			// return if we should continue with the next page
-			//return true
-			return false
+			return true
 		})
 	if err != nil {
 		return nil, err
@@ -96,10 +99,10 @@ func filter_objects(objs []string, pattern string) ([]string, error) {
 	return match_objs, nil
 }
 
-func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyvalue, error) {
+func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyvalue, []keyvalue, error) {
 	pacific, err := time.LoadLocation(tz)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	today := bod(time.Now().In(pacific))
@@ -112,43 +115,46 @@ func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyval
 	var old_tag_dir = "old_tags"
 	var fresh_objs []keyvalue
 	var expired_objs []keyvalue
+	var retired_objs []keyvalue
 	for _, k := range objs {
 		dir, file := filepath.Split(k)
 		base := filepath.Base(dir)
 
-		//fmt.Println("base: ", base)
-		//fmt.Println("file: ", file)
-
-		if base != old_tag_dir {
-			tag_name := strings.TrimSuffix(file, ".list")
-			tag_date, err := parse_d_tag(tag_name)
-			if err != nil {
-				return nil, nil, err
-			}
-
-			m := keyvalue{
-				"key":  k,
-				"file": file,
-				"base": base,
-				"time": tag_date,
-				"tag":  tag_name,
-			}
-
-			if !tag_date.Before(cutoff_date) {
-				fresh_objs = append(fresh_objs, m)
-				continue
-			}
-
-			target := path.Join(dir, old_tag_dir, file)
-			m["target_key"] = target
-
-			expired_objs = append(expired_objs, m)
+		p := keyvalue{
+			"key":  k,
+			"file": file,
+			"base": base,
 		}
+
+		if base == old_tag_dir {
+			// already retried
+			retired_objs = append(retired_objs, p)
+		}
+
+		// do not bother to further parse retired tags
+		tag_name := strings.TrimSuffix(file, ".list")
+		tag_date, err := parse_d_tag(tag_name)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		p["time"] = tag_date
+		p["tag"] = tag_name
+
+		if !tag_date.Before(cutoff_date) {
+			fresh_objs = append(fresh_objs, p)
+			continue
+		}
+
+		target := path.Join(dir, old_tag_dir, file)
+		p["target_key"] = target
+
+		expired_objs = append(expired_objs, p)
 	}
 	fmt.Printf("found %d \"fresh enough\" eups tag files\n", len(fresh_objs))
 	fmt.Printf("found %d expired eups tag files\n", len(expired_objs))
 
-	return fresh_objs, expired_objs, nil
+	return fresh_objs, expired_objs, retired_objs, nil
 }
 
 func mv_object(s3svc *s3.S3, src_bkt string, src_key string, dst_bkt string, dst_key string) error {
@@ -186,6 +192,11 @@ func mv_object(s3svc *s3.S3, src_bkt string, src_key string, dst_bkt string, dst
 	return nil
 }
 
+/*
+ * Note: This program is intentional serialized as this makes it easier to
+ * develope the workflow.  It should be easy to convert to concurrent s3
+ * operations if needed for performance in the future.
+ */
 func run() error {
 	// the default behavior of flags.Parse() includes flags.HelpFlag, which
 	// results in the usage message being printed twice if we are manually
@@ -211,6 +222,10 @@ func run() error {
 	}
 	s3svc := s3.New(sess)
 
+	// it would be more memory efficent to loop over objects as they are
+	// fetched and this might be required for buckets with a large number of
+	// objects. However, it is slightly easier to refactor/recompose as a
+	// pipeline of several small steps.
 	objs, err := fetch_objects(s3svc, opts.Bucket, opts.PageSize)
 	if err != nil {
 		return err
@@ -221,18 +236,22 @@ func run() error {
 		return err
 	}
 
-	fresh_objs, expired_objs, err := parse_objects(
+	fresh_objs, expired_objs, retired_objs, err := parse_objects(
 		taglike_objs, "US/Pacific", 30)
 	if err != nil {
 		return err
 	}
 
 	if opts.Verbose {
+		fmt.Println("already retried objects")
+		for _, k := range retired_objs {
+			fmt.Println(k["key"])
+		}
+
 		fmt.Println("\"fresh enough\" objects")
 		for _, k := range fresh_objs {
 			fmt.Println(k["key"])
 		}
-
 	}
 
 	fmt.Println("expired objects")
