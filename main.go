@@ -28,8 +28,9 @@ func parse_d_tag(tag string) (t time.Time, err error) {
 
 func run() error {
 	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String("us-east-1")},
-	)
+		Region: aws.String("us-east-1"),
+		CredentialsChainVerboseErrors: aws.Bool(true),
+	})
 	if err != nil {
 		return err
 	}
