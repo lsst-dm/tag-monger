@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+type keyvalue map[string]interface{}
+
 // https://stackoverflow.com/questions/25254443/return-local-beginning-of-day-time-object-in-go/25254593#25254593
 func Bod(t time.Time) time.Time {
 	year, month, day := t.Date()
@@ -26,6 +28,113 @@ func parse_d_tag(tag string) (t time.Time, err error) {
 	return t, err
 }
 
+func fetch_objects(s3svc *s3.S3, bucket_name string, page_size int64) ([]string, error) {
+	inputparams := &s3.ListObjectsInput{
+		Bucket:  aws.String(bucket_name),
+		MaxKeys: aws.Int64(page_size),
+	}
+
+	fmt.Println("looking for objects in bucket:", *inputparams.Bucket)
+	fmt.Println("page size:", *inputparams.MaxKeys)
+
+	var objs []string
+	pageNum := 0
+	err := s3svc.ListObjectsPages(
+		inputparams,
+		func(page *s3.ListObjectsOutput, lastPage bool) bool {
+			fmt.Println("Page", pageNum)
+			pageNum++
+			for _, value := range page.Contents {
+				objs = append(objs, *value.Key)
+			}
+
+			// return if we should continue with the next page
+			//return true
+			return false
+		})
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("found %d objects\n", len(objs))
+
+	return objs, nil
+}
+
+func filter_objects(objs []string, pattern string) ([]string, error) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Println("looking for objects like:", pattern)
+	var match_objs []string
+	for _, k := range objs {
+		if re.MatchString(k) {
+			fmt.Println(k)
+			match_objs = append(match_objs, k)
+		}
+	}
+	fmt.Printf("found %d objects\n", len(match_objs))
+
+	return match_objs, nil
+}
+
+func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyvalue, error) {
+	pacific, err := time.LoadLocation(tz)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	today := Bod(time.Now().In(pacific))
+	fmt.Println("today:", today)
+	cutoff_date := today.AddDate(0, 0, (max_days - 1))
+	fmt.Println("expire tags prior to", cutoff_date)
+
+	fmt.Println("groking objects")
+
+	var old_tag_dir = "old_tags"
+	var fresh_objs []keyvalue
+	var expired_objs []keyvalue
+	for _, k := range objs {
+		dir, file := filepath.Split(k)
+		base := filepath.Base(dir)
+
+		//fmt.Println("base: ", base)
+		//fmt.Println("file: ", file)
+
+		if base != old_tag_dir {
+			tag_name := strings.TrimSuffix(file, ".list")
+			tag_date, err := parse_d_tag(tag_name)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			m := keyvalue{
+				"key":  k,
+				"file": file,
+				"base": base,
+				"time": tag_date,
+				"tag":  tag_name,
+			}
+
+			if !tag_date.Before(cutoff_date) {
+				fresh_objs = append(fresh_objs, m)
+				continue
+			}
+
+			target := path.Join(dir, old_tag_dir, file)
+			m["target_key"] = target
+
+			expired_objs = append(expired_objs, m)
+		}
+	}
+	fmt.Printf("found %d \"fresh enough\" eups tag files\n", len(fresh_objs))
+	fmt.Printf("found %d expired eups tag files\n", len(expired_objs))
+
+	return fresh_objs, expired_objs, nil
+}
+
 func run() error {
 	sess, err := session.NewSession(&aws.Config{
 		Region: aws.String("us-east-1"),
@@ -36,70 +145,31 @@ func run() error {
 	}
 	s3svc := s3.New(sess)
 
-	inputparams := &s3.ListObjectsInput{
-		Bucket:  aws.String("eups.lsst.codes"),
-		MaxKeys: aws.Int64(500),
-	}
-
-	re := regexp.MustCompile(`d_\d{4}_\d{2}_\d{2}\.list$`)
-
-	var objs []string
-
-	pageNum := 0
-	err = s3svc.ListObjectsPages(inputparams, func(page *s3.ListObjectsOutput, lastPage bool) bool {
-		fmt.Println("Page", pageNum)
-		pageNum++
-		for _, value := range page.Contents {
-			if re.MatchString(*value.Key) {
-				objs = append(objs, *value.Key)
-				fmt.Println(*value.Key)
-			}
-		}
-		fmt.Println("pageNum", pageNum, "lastPage", lastPage)
-
-		// return if we should continue with the next page
-		//return true
-		return false
-	})
+	objs, err := fetch_objects(s3svc, "eups.lsst.codes", 500)
 	if err != nil {
 		return err
 	}
 
-	pacific, err := time.LoadLocation("US/Pacific")
+	taglike_objs, err := filter_objects(objs, `d_\d{4}_\d{2}_\d{2}\.list$`)
 	if err != nil {
 		return err
 	}
-	today := Bod(time.Now().In(pacific))
-	fmt.Println(today)
-	var old_tag_dir = "old_tags"
-	type keyvalue map[string]interface{}
-	var stale_objs []keyvalue
-	for _, k := range objs {
-		fmt.Println("key: ", k)
 
-		dir, file := filepath.Split(k)
-		base := filepath.Base(dir)
-
-		fmt.Println("base: ", base)
-		fmt.Println("file: ", file)
-
-		if base != old_tag_dir {
-			target := path.Join(dir, old_tag_dir, file)
-			d_tag, err := parse_d_tag(strings.TrimSuffix(file, ".list"))
-			if err != nil {
-				return err
-			}
-			m := keyvalue{
-				"current_key": k,
-				"target_key":  target,
-				"time":        d_tag,
-			}
-			stale_objs = append(stale_objs, m)
-		}
+	fresh_objs, expired_objs, err := parse_objects(
+		taglike_objs, "US/Pacific", 30)
+	if err != nil {
+		return err
 	}
 
-	for _, k := range stale_objs {
-		fmt.Println(k)
+	fmt.Println("\"fresh enough\" objects")
+	for _, k := range fresh_objs {
+		fmt.Println(k["key"])
+	}
+
+	fmt.Println("expired objects")
+	for _, k := range expired_objs {
+		fmt.Println(k["key"])
+		fmt.Println("    -> ", k["target_key"])
 	}
 
 	return nil
