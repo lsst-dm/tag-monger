@@ -1,12 +1,18 @@
 FROM golang:1.9.5-alpine3.7 as builder
 
-RUN apk --update --no-cache add ca-certificates curl git \
+RUN apk --update --no-cache add \
+    binutils \
+    ca-certificates \
+    curl \
+    git \
     && rm -rf /root/.cache
-RUN curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
+RUN curl -sSL https://raw.githubusercontent.com/golang/dep/master/install.sh \
+    | sh
 WORKDIR /go/src/github.com/lsst-sqre/tag-monger
 COPY . .
-RUN dep ensure
+RUN dep ensure && dep status
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o app .
+RUN strip app
 
 FROM alpine:3.7
 RUN apk --update --no-cache add ca-certificates tzdata bash \
