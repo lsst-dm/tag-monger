@@ -22,7 +22,8 @@ var opts struct {
 	Verbose  bool   `short:"v" long:"verbose" description:"Show verbose debug information" env:"TAG_MONGER_VERBOSE"`
 	PageSize int64  `short:"p" long:"pagesize" description:"page size of s3 object listing" default:"100" env:"TAG_MONGER_PAGESIZE"`
 	Limit    int64  `short:"l" long:"limit" description:"maximum number of s3 object to list" default:"1000" env:"TAG_MONGER_LIMIT"`
-	Bucket   string `short:"b" long:"bucket" description:"name of s3 bucket" required:"true" env:"TAG_MONGER_BUCKET" group:"foo"`
+	Bucket   string `short:"b" long:"bucket" description:"name of s3 bucket" required:"true" env:"TAG_MONGER_BUCKET"`
+	Days     int    `short:"d" long:"days" description:"Expire tags older than N days" default:"30" env:"TAG_MONGER_DAYS"`
 	Group    struct {
 		Help bool `short:"h" long:"help" description:"Show this help message"`
 	} `group:"Help Options"`
@@ -247,7 +248,7 @@ func run() error {
 	}
 
 	fresh_objs, expired_objs, retired_objs, err := parse_objects(
-		taglike_objs, "US/Pacific", 30)
+		taglike_objs, "US/Pacific", opts.Days)
 	if err != nil {
 		return err
 	}
