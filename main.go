@@ -169,12 +169,12 @@ func mv_object(s3svc *s3.S3, src_bkt string, src_key string, dst_bkt string, dst
 		return err
 	}
 
-	// Wait to see if it happened
-	headinput := &s3.HeadObjectInput{
+	// wait for new object
+	dst_headinput := &s3.HeadObjectInput{
 		Bucket: aws.String(dst_bkt),
 		Key:    aws.String(dst_key),
 	}
-	err = s3svc.WaitUntilObjectExists(headinput)
+	err = s3svc.WaitUntilObjectExists(dst_headinput)
 	if err != nil {
 		return err
 	}
@@ -185,6 +185,16 @@ func mv_object(s3svc *s3.S3, src_bkt string, src_key string, dst_bkt string, dst
 		Key:    aws.String(src_key),
 	}
 	_, err = s3svc.DeleteObject(deleteinput)
+	if err != nil {
+		return err
+	}
+
+	// wait for old object to die
+	src_headinput := &s3.HeadObjectInput{
+		Bucket: aws.String(src_bkt),
+		Key:    aws.String(src_key),
+	}
+	err = s3svc.WaitUntilObjectNotExists(src_headinput)
 	if err != nil {
 		return err
 	}
