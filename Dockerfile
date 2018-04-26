@@ -11,7 +11,7 @@ RUN curl -sSL https://raw.githubusercontent.com/golang/dep/master/install.sh \
     | sh
 WORKDIR /go/src/github.com/lsst-sqre/tag-monger
 COPY . .
-RUN { [[ ! -e vendor ]] && dep ensure && dep status || true; }
+RUN if [[ ! -e vendor ]]; then dep ensure && dep status; else true; fi
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o "$BIN" .
 RUN strip "$BIN"
 
