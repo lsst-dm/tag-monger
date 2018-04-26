@@ -155,6 +155,7 @@ func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyval
 	}
 	fmt.Printf("found %d \"fresh enough\" eups tag files\n", len(fresh_objs))
 	fmt.Printf("found %d expired eups tag files\n", len(expired_objs))
+	fmt.Printf("found %d retired eups tag files\n", len(retired_objs))
 
 	return fresh_objs, expired_objs, retired_objs, nil
 }
