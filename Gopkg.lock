@@ -30,16 +30,24 @@
     "private/protocol/restxml",
     "private/protocol/xml/xmlutil",
     "service/s3",
+    "service/s3/s3iface",
+    "service/s3/s3manager",
     "service/sts"
   ]
-  revision = "6454c9c7415974700e9d0d7f480edbe669f7b2f8"
-  version = "v1.13.36"
+  revision = "64aa9485bf77b8a811e88e95060a4a049bb373fb"
+  version = "v1.13.37"
 
 [[projects]]
   name = "github.com/go-ini/ini"
   packages = ["."]
   revision = "6529cf7c58879c08d927016dde4477f18a0634cb"
   version = "v1.36.0"
+
+[[projects]]
+  name = "github.com/jessevdk/go-flags"
+  packages = ["."]
+  revision = "c6ca198ec95c841fdb89fc0de7496fed11ab854e"
+  version = "v1.4.0"
 
 [[projects]]
   name = "github.com/jmespath/go-jmespath"
@@ -49,6 +57,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "c7fa0d0922bc7b398f8968eddcbab78964ec2c7d90712fc8922ee475f7e39410"
+  inputs-digest = "7abe4e482746874c983956854e6a6a341ed91f99dcf8e9cd03f31d6220814806"
   solver-name = "gps-cdcl"
   solver-version = 1
