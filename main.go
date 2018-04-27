@@ -269,7 +269,7 @@ func run() error {
 
 	fmt.Println("expired objects")
 	for _, k := range expired_objs {
-		if opts.Noop {
+		if !opts.Noop {
 			err := mv_object(
 				s3svc,
 				opts.Bucket,
