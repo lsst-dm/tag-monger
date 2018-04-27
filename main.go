@@ -109,7 +109,7 @@ func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyval
 
 	today := bod(time.Now().In(pacific))
 	fmt.Println("today:", today)
-	cutoff_date := today.AddDate(0, 0, (max_days - 1))
+	cutoff_date := today.AddDate(0, 0, -(max_days - 1))
 	fmt.Println("expire tags prior to", cutoff_date)
 
 	fmt.Println("groking objects...")
