@@ -112,7 +112,7 @@ func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyval
 	cutoff_date := today.AddDate(0, 0, (max_days - 1))
 	fmt.Println("expire tags prior to", cutoff_date)
 
-	fmt.Println("groking objects")
+	fmt.Println("groking objects...")
 
 	var old_tag_dir = "old_tags"
 	var fresh_objs []keyvalue
@@ -256,19 +256,28 @@ func run() error {
 	}
 
 	if opts.Verbose {
-		fmt.Println("already retried objects")
+		fmt.Println("already retried objects:")
 		for _, k := range retired_objs {
 			fmt.Println(k["key"])
 		}
 
-		fmt.Println("\"fresh enough\" objects")
+		fmt.Println("\"fresh enough\" objects:")
 		for _, k := range fresh_objs {
+			fmt.Println(k["key"])
+		}
+
+		fmt.Println("expired objects:")
+		for _, k := range expired_objs {
 			fmt.Println(k["key"])
 		}
 	}
 
-	fmt.Println("expired objects")
 	for _, k := range expired_objs {
+		if opts.Verbose {
+			fmt.Println("renaming", k["key"])
+			fmt.Println("    -> ", k["target_key"])
+		}
+
 		if !opts.Noop {
 			err := mv_object(
 				s3svc,
@@ -279,11 +288,8 @@ func run() error {
 			if err != nil {
 				return err
 			}
-		}
-
-		if opts.Verbose {
-			fmt.Println(k["key"])
-			fmt.Println("    -> ", k["target_key"])
+		} else {
+			fmt.Println("    (noop)")
 		}
 	}
 
