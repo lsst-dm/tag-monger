@@ -131,6 +131,7 @@ func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyval
 		if base == old_tag_dir {
 			// already retried
 			retired_objs = append(retired_objs, p)
+			continue
 		}
 
 		// do not bother to further parse retired tags
