@@ -219,7 +219,8 @@ func run() error {
 	p := flags.NewParser(&opts, flags.PassDoubleDash)
 	_, err := p.Parse()
 	if err != nil {
-		fmt.Println(err, "\n")
+		fmt.Print(err)
+		fmt.Println()
 
 		var b bytes.Buffer
 		p.WriteHelp(&b)
