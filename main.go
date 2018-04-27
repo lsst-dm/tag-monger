@@ -109,7 +109,7 @@ func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyval
 
 	today := bod(time.Now().In(pacific))
 	fmt.Println("today:", today)
-	cutoff_date := today.AddDate(0, 0, (max_days - 1))
+	cutoff_date := today.AddDate(0, 0, -(max_days - 1))
 	fmt.Println("expire tags prior to", cutoff_date)
 
 	fmt.Println("groking objects...")
@@ -219,7 +219,8 @@ func run() error {
 	p := flags.NewParser(&opts, flags.PassDoubleDash)
 	_, err := p.Parse()
 	if err != nil {
-		fmt.Println(err, "\n")
+		fmt.Print(err)
+		fmt.Println()
 
 		var b bytes.Buffer
 		p.WriteHelp(&b)
