@@ -253,7 +253,7 @@ func run() error {
 	}
 
 	fresh_objs, expired_objs, retired_objs, err := parse_objects(
-		taglike_objs, "US/Pacific", opts.Days)
+		taglike_objs, "America/Los_Angeles", opts.Days)
 	if err != nil {
 		return err
 	}
