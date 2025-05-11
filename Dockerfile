@@ -1,6 +1,7 @@
-FROM golang:latest AS builder
-
 ARG BIN=tag-monger
+
+FROM golang:latest AS builder
+ARG BIN
 RUN apt-get update && \
     apt-get install  \
     binutils \
@@ -15,6 +16,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o "$BIN" .
 RUN strip "$BIN"
 
 FROM ubuntu:latest
+ARG BIN
 RUN apt-get update && \
     apt-get install -y ca-certificates tzdata bash && \
     rm -rf /var/lib/apt/lists/*
