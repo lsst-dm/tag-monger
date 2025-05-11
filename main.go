@@ -138,7 +138,8 @@ func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyval
 		tag_name := strings.TrimSuffix(file, ".list")
 		tag_date, err := parse_d_tag(tag_name)
 		if err != nil {
-			return nil, nil, nil, err
+			fmt.Println("Error parsing tag name:", tag_name)
+			continue
 		}
 
 		p["time"] = tag_date
@@ -207,12 +208,12 @@ func mv_object(s3svc *s3.S3, src_bkt string, src_key string, dst_bkt string, dst
 }
 
 /*
- * Note: This program is intentional serialized as this makes it easier to
- * develope the workflow.  It should be easy to convert to concurrent s3
+ * Note: This program is intentionally serialized as this makes it easier to
+ * develop the workflow.  It should be easy to convert to concurrent s3
  * operations if needed for performance in the future.
  */
 func run() error {
-	// the default behavior of flags.Parse() includes flags.HelpFlag, which
+	// The default behavior of flags.Parse() includes flags.HelpFlag, which
 	// results in the usage message being printed twice if we are manually
 	// printing the usage message on any flag error. Thus, -h|--help is being
 	// own way.
@@ -237,8 +238,8 @@ func run() error {
 	}
 	s3svc := s3.New(sess)
 
-	// it would be more memory efficent to loop over objects as they are
-	// fetched and this might be required for buckets with a large number of
+	// It would be more memory-efficient to loop over objects as they are
+	// fetched, and this might be required for buckets with a large number of
 	// objects. However, it is slightly easier to refactor/recompose as a
 	// pipeline of several small steps.
 	objs, err := fetch_objects(s3svc, opts.Bucket, opts.PageSize)
