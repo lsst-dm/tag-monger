@@ -7,7 +7,7 @@ s3 bucket.
 Docker Image
 ---
 
-[`docker.io/lsstsqre/tag-monger`](https://hub.docker.com/r/lsstsqre/tag-monger/)
+[`https://github.com/lsst-dm/tag-monger/pkgs/container/tag-monger`](https://github.com/lsst-dm/tag-monger/pkgs/container/tag-monger/)
 
 Usage
 ---
