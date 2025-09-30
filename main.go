@@ -2,23 +2,36 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/jessevdk/go-flags"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"cloud.google.com/go/storage"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/jessevdk/go-flags"
+	"google.golang.org/api/iterator"
 )
 
-type keyvalue map[string]interface{}
+type Tags struct {
+	key        string
+	base       string
+	file       string
+	time       time.Time
+	target_key string
+	tag        string
+}
 
 var opts struct {
+	AWS        bool   `short:"a" long:"aws" description:"Run on aws s3" `
+	GCS        bool   `short:"g" long:"gcs" description:"Run on Google cloud storage" `
 	Verbose    bool   `short:"v" long:"verbose" description:"Show verbose debug information" env:"TAG_MONGER_VERBOSE"`
 	PageSize   int64  `short:"p" long:"pagesize" description:"page size of s3 object listing" default:"100" env:"TAG_MONGER_PAGESIZE"`
 	MaxObjects int64  `short:"m" long:"max" description:"maximum number of s3 object to list" default:"1000" env:"TAG_MONGER_MAX"`
@@ -43,7 +56,31 @@ func parse_d_tag(tag string) (t time.Time, err error) {
 	return t, err
 }
 
-func fetch_objects(s3svc *s3.S3, bucket_name string, page_size int64) ([]string, error) {
+func gcs_fetch_objects(ctx context.Context, client storage.Client, bucket_name string) ([]string, error) {
+	fmt.Println("looking for objects in bucket:", bucket_name)
+
+	var objs []string
+	it := client.Bucket(bucket_name).Objects(ctx, nil)
+	for {
+		attrs, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to iterate objects: %v", err)
+		}
+
+		objs = append(objs, attrs.Name)
+
+		if opts.MaxObjects > 0 && int64(len(objs)) >= opts.MaxObjects {
+			fmt.Printf("found %d objects\n", len(objs))
+		}
+	}
+
+	return objs, nil
+}
+
+func aws_fetch_objects(s3svc *s3.S3, bucket_name string, page_size int64) ([]string, error) {
 	inputparams := &s3.ListObjectsInput{
 		Bucket:  aws.String(bucket_name),
 		MaxKeys: aws.Int64(page_size),
@@ -101,7 +138,7 @@ func filter_objects(objs []string, pattern string) ([]string, error) {
 	return match_objs, nil
 }
 
-func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyvalue, []keyvalue, error) {
+func parse_objects(objs []string, tz string, max_days int) ([]Tags, []Tags, []Tags, error) {
 	pacific, err := time.LoadLocation(tz)
 	if err != nil {
 		return nil, nil, nil, err
@@ -114,18 +151,18 @@ func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyval
 
 	fmt.Println("groking objects...")
 
-	var old_tag_dir = "old_tags"
-	var fresh_objs []keyvalue
-	var expired_objs []keyvalue
-	var retired_objs []keyvalue
+	old_tag_dir := "old_tags"
+	var fresh_objs []Tags
+	var expired_objs []Tags
+	var retired_objs []Tags
 	for _, k := range objs {
 		dir, file := filepath.Split(k)
 		base := filepath.Base(dir)
 
-		p := keyvalue{
-			"key":  k,
-			"file": file,
-			"base": base,
+		p := Tags{
+			key:  k,
+			file: file,
+			base: base,
 		}
 
 		if base == old_tag_dir {
@@ -142,8 +179,8 @@ func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyval
 			continue
 		}
 
-		p["time"] = tag_date
-		p["tag"] = tag_name
+		p.time = tag_date
+		p.tag = tag_name
 
 		if !tag_date.Before(cutoff_date) {
 			fresh_objs = append(fresh_objs, p)
@@ -151,7 +188,7 @@ func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyval
 		}
 
 		target := path.Join(dir, old_tag_dir, file)
-		p["target_key"] = target
+		p.target_key = target
 
 		expired_objs = append(expired_objs, p)
 	}
@@ -160,6 +197,24 @@ func parse_objects(objs []string, tz string, max_days int) ([]keyvalue, []keyval
 	fmt.Printf("found %d retired eups tag files\n", len(retired_objs))
 
 	return fresh_objs, expired_objs, retired_objs, nil
+}
+
+func gcs_mv_object(client *storage.Client, src_bkt string, src_key string, dst_bkt string, dst_key string) error {
+	ctx := context.Background()
+	srcObj := client.Bucket(src_bkt).Object(src_key)
+	dstObj := client.Bucket(dst_bkt).Object(dst_key)
+
+	// copy obj
+	_, err := dstObj.CopierFrom(srcObj).Run(ctx)
+	if err != nil {
+		return err
+	}
+	// delete obj
+	err = srcObj.Delete(ctx)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func mv_object(s3svc *s3.S3, src_bkt string, src_key string, dst_bkt string, dst_key string) error {
@@ -227,75 +282,116 @@ func run() error {
 		p.WriteHelp(&b)
 		return errors.New(b.String())
 	}
+	if opts.AWS {
+		sess, err := session.NewSession(&aws.Config{
+			// $AWS_REGION must be set if this is ommited.
+			// Region: aws.String("us-east-1"),
+			CredentialsChainVerboseErrors: aws.Bool(true),
+		})
+		if err != nil {
+			return err
+		}
+		s3svc := s3.New(sess)
+		// It would be more memory-efficient to loop over objects as they are
+		// fetched, and this might be required for buckets with a large number of
+		// objects. However, it is slightly easier to refactor/recompose as a
+		// pipeline of several small steps.
+		objs, err := aws_fetch_objects(s3svc, opts.Bucket, opts.PageSize)
+		if err != nil {
+			return err
+		}
+		taglike_objs, err := filter_objects(objs, `d_\d{4}_\d{2}_\d{2}\.list$`)
+		if err != nil {
+			return err
+		}
+		fresh_objs, expired_objs, retired_objs, err := parse_objects(
+			taglike_objs, "America/Los_Angeles", opts.Days)
+		if err != nil {
+			return err
+		}
 
-	sess, err := session.NewSession(&aws.Config{
-		// $AWS_REGION must be set if this is ommited.
-		//Region: aws.String("us-east-1"),
-		CredentialsChainVerboseErrors: aws.Bool(true),
-	})
-	if err != nil {
-		return err
+		process_tags(retired_objs, fresh_objs, expired_objs, sess, nil)
+		return nil
+
+	} else if opts.GCS {
+		ctx := context.Background()
+		client, err := storage.NewClient(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to create client: %v", err)
+		}
+
+		objs, err := gcs_fetch_objects(ctx, *client, opts.Bucket)
+		if err != nil {
+			return err
+		}
+
+		taglike_objs, err := filter_objects(objs, `d_\d{4}_\d{2}_\d{2}\.list$`)
+		if err != nil {
+			return err
+		}
+
+		fresh_objs, expired_objs, retired_objs, err := parse_objects(
+			taglike_objs, "America/Los_Angeles", opts.Days)
+		if err != nil {
+			return err
+		}
+		process_tags(retired_objs, fresh_objs, expired_objs, client, ctx)
+		return nil
+	} else {
+		return fmt.Errorf("no provider was added")
 	}
-	s3svc := s3.New(sess)
+}
 
-	// It would be more memory-efficient to loop over objects as they are
-	// fetched, and this might be required for buckets with a large number of
-	// objects. However, it is slightly easier to refactor/recompose as a
-	// pipeline of several small steps.
-	objs, err := fetch_objects(s3svc, opts.Bucket, opts.PageSize)
-	if err != nil {
-		return err
-	}
-
-	taglike_objs, err := filter_objects(objs, `d_\d{4}_\d{2}_\d{2}\.list$`)
-	if err != nil {
-		return err
-	}
-
-	fresh_objs, expired_objs, retired_objs, err := parse_objects(
-		taglike_objs, "America/Los_Angeles", opts.Days)
-	if err != nil {
-		return err
-	}
-
+func process_tags(retired_objs []Tags, fresh_objs []Tags, expired_objs []Tags, svc any, ctx context.Context) error {
 	if opts.Verbose {
 		fmt.Println("already retried objects:")
 		for _, k := range retired_objs {
-			fmt.Println(k["key"])
+			fmt.Println(k.key)
 		}
 
 		fmt.Println("\"fresh enough\" objects:")
 		for _, k := range fresh_objs {
-			fmt.Println(k["key"])
+			fmt.Println(k.key)
 		}
 
 		fmt.Println("expired objects:")
 		for _, k := range expired_objs {
-			fmt.Println(k["key"])
+			fmt.Println(k.key)
 		}
 	}
 
 	for _, k := range expired_objs {
 		if opts.Verbose {
-			fmt.Println("renaming", k["key"])
-			fmt.Println("    -> ", k["target_key"])
+			fmt.Println("renaming", k.key)
+			fmt.Println("    -> ", k.target_key)
 		}
 
 		if !opts.Noop {
-			err := mv_object(
-				s3svc,
-				opts.Bucket,
-				k["key"].(string),
-				opts.Bucket,
-				k["target_key"].(string))
-			if err != nil {
-				return err
+			if opts.AWS == true {
+				err := mv_object(
+					svc.(*s3.S3),
+					opts.Bucket,
+					k.key,
+					opts.Bucket,
+					k.target_key)
+				if err != nil {
+					return err
+				}
+			} else {
+				err := gcs_mv_object(
+					svc.(*storage.Client),
+					opts.Bucket,
+					k.key,
+					opts.Bucket,
+					k.target_key)
+				if err != nil {
+					return err
+				}
 			}
 		} else {
 			fmt.Println("    (noop)")
 		}
 	}
-
 	return nil
 }
 

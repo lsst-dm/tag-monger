@@ -17,6 +17,8 @@ error: Usage:
   tag-monger
 
 Application Options:
+  -a, --aws       Run on aws s3
+  -g, --gcs       Run on Google cloud storage
   -v, --verbose   Show verbose debug information [$TAG_MONGER_VERBOSE]
   -p, --pagesize= page size of s3 object listing (default: 100) [$TAG_MONGER_PAGESIZE]
   -m, --max=      maximum number of s3 object to list (default: 1000) [$TAG_MONGER_MAX]
