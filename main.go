@@ -127,7 +127,7 @@ func filter_objects(objs []string, pattern string) ([]string, error) {
 		return nil, err
 	}
 
-	fmt.Println("looking for objects like:", pattern)
+	fmt.Println("looking for tags like:", pattern)
 	var match_objs []string
 	for _, k := range objs {
 		if re.MatchString(k) {
@@ -137,7 +137,6 @@ func filter_objects(objs []string, pattern string) ([]string, error) {
 			match_objs = append(match_objs, k)
 		}
 	}
-	fmt.Printf("found %d objects\n", len(match_objs))
 
 	return match_objs, nil
 }
@@ -203,12 +202,12 @@ func parse_objects(objs []string, tz string, max_days int) ([]Tags, []Tags, []Ta
 	return fresh_objs, expired_objs, retired_objs, nil
 }
 
-func gcs_mv_object(client *storage.Client, src_bkt string, src_key string, dst_bkt string, dst_key string) error {
-	ctx := context.Background()
+func gcs_mv_object(ctx context.Context,client *storage.Client, src_bkt string, src_key string, dst_bkt string, dst_key string) error {
 	srcObj := client.Bucket(src_bkt).Object(src_key)
 	dstObj := client.Bucket(dst_bkt).Object(dst_key)
 
 	// copy obj
+	fmt.Printf("Copying %s to %s",src_bkt+src_key, dst_bkt+dst_key)
 	_, err := dstObj.CopierFrom(srcObj).Run(ctx)
 	if err != nil {
 		return err
@@ -328,11 +327,13 @@ func run() error {
 		if err != nil {
 			return err
 		}
+		println("Found",len(objs),"total items")
 
 		taglike_objs, err := filter_objects(objs, `d_\d{4}_\d{2}_\d{2}\.list$`)
 		if err != nil {
 			return err
 		}
+		println("Found",len(taglike_objs),"total tags")
 
 		fresh_objs, expired_objs, retired_objs, err := parse_objects(
 			taglike_objs, "America/Los_Angeles", opts.Days)
@@ -383,6 +384,7 @@ func process_tags(retired_objs []Tags, fresh_objs []Tags, expired_objs []Tags, s
 				}
 			} else {
 				err := gcs_mv_object(
+					ctx,
 					svc.(*storage.Client),
 					opts.Bucket,
 					k.key,
