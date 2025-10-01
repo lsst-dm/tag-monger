@@ -74,6 +74,10 @@ func gcs_fetch_objects(ctx context.Context, client storage.Client, bucket_name s
 
 		if opts.MaxObjects > 0 && int64(len(objs)) >= opts.MaxObjects {
 			fmt.Printf("found %d objects\n", len(objs))
+			break
+		}
+		if len(objs)%10000==0{
+			fmt.Printf("Loaded %d files from bucket\n",len(objs))
 		}
 	}
 
