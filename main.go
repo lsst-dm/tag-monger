@@ -31,7 +31,7 @@ var opts struct {
 	PageSize   int64  `short:"p" long:"pagesize" description:"page size of s3 object listing" default:"100" env:"TAG_MONGER_PAGESIZE"`
 	MaxObjects int64  `short:"m" long:"max" description:"maximum number of s3 object to list" default:"1000" env:"TAG_MONGER_MAX"`
 	Bucket     string `short:"b" long:"bucket" description:"name of s3 bucket" required:"true" env:"TAG_MONGER_BUCKET"`
-	Days       int    `short:"d" long:"days" description:"Expire tags older than N days" default:"30" env:"TAG_MONGER_DAYS"`
+	Days       int    `short:"d" long:"days" description:"Expire tags older than N days" default:"14" env:"TAG_MONGER_DAYS"`
 	Noop       bool   `short:"n" long:"noop" description:"Do not make any changes" env:"TAG_MONGER_NOOP"`
 	Group      struct {
 		Help bool `short:"h" long:"help" description:"Show this help message"`
