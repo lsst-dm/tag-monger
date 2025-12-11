@@ -127,6 +127,12 @@ func TestWeeklyParser(t *testing.T) {
 			tag: "W_2025_54",
 			wantErr: true,
 		},
+		{
+			name: "valid tag 53 week",
+			tag: "W_2023_53",
+			expected: time.Date(2023,12,31,0,0,0,0,time.UTC),
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {

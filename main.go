@@ -100,7 +100,7 @@ func parse_w_tag(tag string) (t time.Time, err error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	if week >=53 || week <=0 {
+	if week >53 || week <=0 {
 		return time.Time{}, fmt.Errorf("invalid week")
 	}
 	// ISO week date format
