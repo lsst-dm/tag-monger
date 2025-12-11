@@ -33,7 +33,7 @@ var opts struct {
 	MaxObjects int64  `short:"m" long:"max" description:"maximum number of s3 object to list" default:"1000" env:"TAG_MONGER_MAX"`
 	Bucket     string `short:"b" long:"bucket" description:"name of s3 bucket" required:"true" env:"TAG_MONGER_BUCKET"`
 	Days       int    `short:"d" long:"days" description:"Expire tags older than N days" default:"14" env:"TAG_MONGER_DAYS"`
-	Weeks       int    `short:"w" long:"weeks" description:"Expire weekly tags older than N weeks" default:"12" env:"TAG_MONGER_WEEKS"`
+	Weeks       int    `short:"w" long:"weeks" description:"Expire weekly tags older than N weeks" default:"14" env:"TAG_MONGER_WEEKS"`
 	Noop       bool   `short:"n" long:"noop" description:"Do not make any changes" env:"TAG_MONGER_NOOP"`
 	Group      struct {
 		Help bool `short:"h" long:"help" description:"Show this help message"`
@@ -49,6 +49,31 @@ func bod(t time.Time) time.Time {
 func parse_d_tag(tag string) (t time.Time, err error) {
 	const shortForm = "d_2006_01_02"
 
+	parts := strings.Split(tag, "_")
+	if len(parts) != 4{
+		return time.Time{}, fmt.Errorf("Got invalid format")
+	}
+	if strings.ToLower(parts[0]) != "d" {
+		return time.Time{}, fmt.Errorf("Got the wrong tag, should be a daily, got %s",parts[0])
+	}
+	month, err := strconv.Atoi((parts[2]))
+	if err != nil{
+		return time.Time{}, err
+	}
+	day, err := strconv.Atoi((parts[3]))
+	if err != nil{
+		return time.Time{}, err
+	}
+	if len(parts[1]) != 4 {
+		return time.Time{}, fmt.Errorf("Got the wrong year format, got %s",parts[1])
+	}
+	if len(parts[2]) != 2 || month >12 || month<01{
+		return time.Time{}, fmt.Errorf("Got the wrong month format, got %s",parts[2])
+	}
+	if len(parts[3]) != 2 || day >31 || day <01{
+		return time.Time{}, fmt.Errorf("Got the wrong day format, got %s",parts[2])
+	}
+
 	t, err = time.Parse(shortForm, tag)
 	return t, err
 }
@@ -58,6 +83,15 @@ func parse_w_tag(tag string) (t time.Time, err error) {
 	if len(parts) != 3{
 		return time.Time{}, err
 	}
+	if strings.ToLower(parts[0]) != "w" {
+		return time.Time{}, fmt.Errorf("Got the wrong tag, should be a weekly, got %s",parts[0])
+	}
+	if len(parts[1]) != 4 {
+		return time.Time{}, fmt.Errorf("Got the wrong year format, got %s",parts[1])
+	}
+	if len(parts[2]) != 2 {
+		return time.Time{}, fmt.Errorf("Got the wrong week format, got %s",parts[2])
+	}
 	year, err := strconv.Atoi((parts[1]))
 	if err != nil {
 		return time.Time{}, err
@@ -66,9 +100,12 @@ func parse_w_tag(tag string) (t time.Time, err error) {
 	if err != nil {
 		return time.Time{}, err
 	}
+	if week >=53 || week <=0 {
+		return time.Time{}, fmt.Errorf("invalid week")
+	}
 	// ISO week date format
 	// Get time for first day of the given year and week
-  t = time.Date(year, 0, 0, 0, 0, 0, 0, time.UTC)
+  t = time.Date(year, 1, 0, 0, 0, 0, 0, time.UTC)
   t = t.AddDate(0, 0, (week-1)*7+1)
   return t, nil
 }
@@ -259,7 +296,7 @@ func run() error {
 	w_fresh_objs,w_expired_objs,w_retired_objs,err := parse_objects(
 		weekly_taglike_objs,
 		"America/Los_Angeles",
-		opts.Weeks)
+		opts.Weeks*7)
 	if err != nil {
 		return err
 	}
