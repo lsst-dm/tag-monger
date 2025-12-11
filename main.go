@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ var opts struct {
 	MaxObjects int64  `short:"m" long:"max" description:"maximum number of s3 object to list" default:"1000" env:"TAG_MONGER_MAX"`
 	Bucket     string `short:"b" long:"bucket" description:"name of s3 bucket" required:"true" env:"TAG_MONGER_BUCKET"`
 	Days       int    `short:"d" long:"days" description:"Expire tags older than N days" default:"14" env:"TAG_MONGER_DAYS"`
+	Weeks       int    `short:"w" long:"weeks" description:"Expire weekly tags older than N weeks" default:"12" env:"TAG_MONGER_WEEKS"`
 	Noop       bool   `short:"n" long:"noop" description:"Do not make any changes" env:"TAG_MONGER_NOOP"`
 	Group      struct {
 		Help bool `short:"h" long:"help" description:"Show this help message"`
@@ -49,6 +51,26 @@ func parse_d_tag(tag string) (t time.Time, err error) {
 
 	t, err = time.Parse(shortForm, tag)
 	return t, err
+}
+
+func parse_w_tag(tag string) (t time.Time, err error) {
+	parts := strings.Split(tag, "_")
+	if len(parts) != 3{
+		return time.Time{}, err
+	}
+	year, err := strconv.Atoi((parts[1]))
+	if err != nil {
+		return time.Time{}, err
+	}
+	week, err := strconv.Atoi((parts[2]))
+	if err != nil {
+		return time.Time{}, err
+	}
+	// ISO week date format
+	// Get time for first day of the given year and week
+  t = time.Date(year, 0, 0, 0, 0, 0, 0, time.UTC)
+  t = t.AddDate(0, 0, (week-1)*7+1)
+  return t, nil
 }
 
 func gcs_fetch_objects(ctx context.Context, client storage.Client, bucket_name string) ([]string, error) {
@@ -131,15 +153,22 @@ func parse_objects(objs []string, tz string, max_days int) ([]Tags, []Tags, []Ta
 			retired_objs = append(retired_objs, p)
 			continue
 		}
-
 		// do not bother to further parse retired tags
 		tag_name := strings.TrimSuffix(file, ".list")
-		tag_date, err := parse_d_tag(tag_name)
-		if err != nil {
-			fmt.Println("Error parsing tag name:", tag_name)
-			continue
+		var tag_date time.Time
+		if strings.HasPrefix(file,"w_"){
+			tag_date, err = parse_w_tag(tag_name)
+			if err != nil {
+				fmt.Println("Error parsing tag name:", tag_name)
+				continue
+			}
+		} else {
+			tag_date, err = parse_d_tag(tag_name)
+			if err != nil {
+				fmt.Println("Error parsing tag name:", tag_name)
+				continue
+			}
 		}
-
 		p.time = tag_date
 		p.tag = tag_name
 
@@ -216,11 +245,27 @@ func run() error {
 	}
 	println("Found", len(taglike_objs), "total tags")
 
+	weekly_taglike_objs, err := filter_objects(objs, `w_\d{4}_\d{2}\.list$`)
+	if err != nil {
+		return err
+	}
+	println("Found", len(weekly_taglike_objs), "total weekly tags")
+
 	fresh_objs, expired_objs, retired_objs, err := parse_objects(
 		taglike_objs, "America/Los_Angeles", opts.Days)
 	if err != nil {
 		return err
 	}
+	w_fresh_objs,w_expired_objs,w_retired_objs,err := parse_objects(
+		weekly_taglike_objs,
+		"America/Los_Angeles",
+		opts.Weeks)
+	if err != nil {
+		return err
+	}
+	fresh_objs = append(fresh_objs,w_fresh_objs...)
+	retired_objs = append(retired_objs,w_retired_objs...)
+	expired_objs = append(expired_objs,w_expired_objs...)
 	process_tags(retired_objs, fresh_objs, expired_objs, client, ctx)
 	return nil
 }
